@@ -4,6 +4,7 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
+
 # --------------------------------------------------
 # Page config
 # --------------------------------------------------
@@ -49,63 +50,62 @@ def check_password():
 if not check_password():
     st.stop()
 
-# --------------------------------------------------
-# App UI
-# --------------------------------------------------
-st.title("Intelligent Prompt Debugger")
-st.caption("Diagnose why prompts fail before trying to fix them.")
-
-prompt = st.text_area(
-    "Paste your prompt below",
-    placeholder="e.g. Write a marketing email for my new product.",
-    height=200
-)
-
-depth = st.selectbox(
-    "Depth",
-    ["Beginner", "Intermediate", "Advanced"]
-)
 
 # --------------------------------------------------
-# Prompt failure zones
+# Prompt archetypes (training examples)
 # --------------------------------------------------
-ZONES = {
-    "Intent Drift": [
-        "What would a disappointing response look like?",
-        "If this worked perfectly, what would you do next?",
-        "What outcome are you actually hoping for?"
-    ],
-    "Missing Constraints": [
-        "What format do you actually need?",
-        "What must NOT appear in the response?",
-        "How detailed is too detailed?"
-    ],
-    "Hidden Assumptions": [
-        "What context exists only in your head?",
-        "What definitions are you taking for granted?",
-        "What knowledge are you assuming the model has?"
-    ],
-    "Audience Confusion": [
-        "Who is this response for, specifically?",
-        "What would make it unusable for them?",
-        "What do they already know or believe?"
-    ],
-    "Evaluation Blindness": [
-        "How will you know this response worked?",
-        "What would make you discard it immediately?",
-        "What criteria matter more than everything else?"
-    ]
-}
+PROMPT_PATTERNS = [
+    {
+        "type": "Instruction",
+        "example": "Explain the following concept step by step for a beginner.",
+        "template": (
+            "Explain {topic} clearly and step by step.\n\n"
+            "Audience: {audience}\n"
+            "Tone: {tone}\n"
+            "Include examples where helpful.\n"
+            "Avoid unnecessary jargon."
+        ),
+    },
+    {
+        "type": "Creative",
+        "example": "Write a short story about a character facing a moral dilemma.",
+        "template": (
+            "Write a {length} piece in the style of {style}.\n\n"
+            "Subject: {topic}\n"
+            "Mood: {tone}\n"
+            "Constraints: {constraints}"
+        ),
+    },
+    {
+        "type": "Analytical",
+        "example": "Compare two approaches and explain their pros and cons.",
+        "template": (
+            "Analyse {topic}.\n\n"
+            "Compare: {items}\n"
+            "Criteria: strengths, weaknesses, trade-offs\n"
+            "Conclusion: practical recommendation"
+        ),
+    },
+    {
+        "type": "Vague",
+        "example": "Tell me something about productivity.",
+        "template": (
+            "Provide a focused response on {topic}.\n\n"
+            "Goal: {goal}\n"
+            "Audience: {audience}\n"
+            "Format: bullet points or steps\n"
+            "Depth: practical and concrete"
+        ),
+    },
+]
 
-# Reduce questions for Beginner mode
-if depth == "Beginner":
-    ZONES = {k: v[:2] for k, v in ZONES.items()}
 
 # --------------------------------------------------
-# Semantic relevance (TF-IDF)
+# Build ML vectorizer
 # --------------------------------------------------
 @st.cache_resource
-def build_vectorizer(texts):
+def build_vectorizer():
+    texts = [p["example"] for p in PROMPT_PATTERNS]
     vectorizer = TfidfVectorizer(
         stop_words="english",
         ngram_range=(1, 2)
@@ -114,27 +114,55 @@ def build_vectorizer(texts):
     return vectorizer, vectors
 
 
-if st.button("Debug prompt"):
-    if not prompt.strip():
+vectorizer, pattern_vectors = build_vectorizer()
+
+
+# --------------------------------------------------
+# UI
+# --------------------------------------------------
+st.title("Intelligent Prompt Debugger")
+st.caption("Turn vague prompts into precise, high-quality instructions.")
+
+user_prompt = st.text_area(
+    "Paste your prompt",
+    height=180,
+    placeholder="e.g. explain productivity"
+)
+
+if st.button("Debug & Improve Prompt"):
+    if not user_prompt.strip():
         st.warning("Paste a prompt first.")
     else:
-        zone_names = list(ZONES.keys())
+        # Vectorise input
+        input_vec = vectorizer.transform([user_prompt])
+        similarities = cosine_similarity(input_vec, pattern_vectors)[0]
 
-        vectorizer, zone_vectors = build_vectorizer(zone_names)
-        prompt_vector = vectorizer.transform([prompt])
+        best_idx = int(np.argmax(similarities))
+        matched_pattern = PROMPT_PATTERNS[best_idx]
 
-        similarities = cosine_similarity(prompt_vector, zone_vectors)[0]
-        ranked_indices = np.argsort(similarities)[::-1]
+        # Output
+        st.subheader("Improved Prompt")
 
-        st.subheader("Likely weak areas")
+        improved_prompt = matched_pattern["template"].format(
+            topic="<<define topic clearly>>",
+            audience="<<who this is for>>",
+            tone="<<desired tone>>",
+            length="<<length>>",
+            style="<<style>>",
+            constraints="<<any constraints>>",
+            items="<<items to compare>>",
+            goal="<<what you want to achieve>>"
+        )
 
-        for idx in ranked_indices[:3]:
-            zone = zone_names[idx]
-            st.markdown(f"### {zone}")
-            for q in ZONES[zone]:
-                st.write("•", q)
+        st.text_area(
+            "Refined prompt (copy & edit)",
+            improved_prompt,
+            height=220
+        )
 
         st.divider()
+
         st.caption(
-            "This tool does not rewrite prompts. It helps you clarify intent, constraints, and evaluation."
+            f"Detected prompt type: **{matched_pattern['type']}**  \n"
+            "This version adds structure, constraints, and clarity so the model knows exactly what to do."
         )
